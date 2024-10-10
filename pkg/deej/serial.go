@@ -36,6 +36,8 @@ type SerialIO struct {
 
 	sliderMoveConsumers []chan SliderMoveEvent
 	buttonEventConsumers []chan ButtonEvent
+
+	notifier *ToastNotifier
 }
 
 // SliderMoveEvent represents a single slider move captured by deej
@@ -52,10 +54,17 @@ type ButtonEvent struct {
 
 var expectedLinePattern = regexp.MustCompile(`^\w{1}\d{1,4}(\|\w{1}\d{1,4})*\r\n$`)
 
+var isDeviceOn = false
+
 // NewSerialIO creates a SerialIO instance that uses the provided deej
 // instance's connection info to establish communications with the arduino chip
 func NewSerialIO(deej *Deej, logger *zap.SugaredLogger) (*SerialIO, error) {
 	logger = logger.Named("serial")
+
+	notifier, err := NewToastNotifier(logger)
+	if err != nil {
+		return nil, err
+	}
 
 	sio := &SerialIO{
 		deej:                deej,
@@ -65,6 +74,7 @@ func NewSerialIO(deej *Deej, logger *zap.SugaredLogger) (*SerialIO, error) {
 		conn:                nil,
 		sliderMoveConsumers: []chan SliderMoveEvent{},
 		buttonEventConsumers: []chan ButtonEvent{},
+		notifier:            notifier, 
 	}
 
 	logger.Debug("Created serial i/o instance")
@@ -248,9 +258,9 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 	// this function receives an unsanitized line which is guaranteed to end with LF,
 	// but most lines will end with CRLF. it may also have garbage instead of
 	// deej-formatted values, so we must check for that! just ignore bad ones
-	if !expectedLinePattern.MatchString(line) {
+	/*if !expectedLinePattern.MatchString(line) {
 		return
-	}
+	}*/
 
 	// trim the suffix
 	line = strings.TrimSuffix(line, "\r\n")
@@ -264,8 +274,26 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 	for _, splitValue := range splitLine {
 		if splitValue[0] == 's' {
 			splitLineSliders = append(splitLineSliders, strings.Replace(splitValue, "s", "", -1))
-		}else if splitValue[0] == 'b' {
+		} else if splitValue[0] == 'b' {
 			splitLineButtons = append(splitLineButtons, strings.Replace(splitValue, "b", "", -1))
+		} else if splitValue[0] == 'o' {
+			if splitValue == "off" {
+				isDeviceOn = false
+				// send notification that the device is off
+				sio.logger.Warn("Device is off")
+				sio.notifier.Notify("Device Status", "The device is off")
+				// change sound output to default
+				
+			} else if splitValue == "on" {
+				if !isDeviceOn {
+				isDeviceOn = true
+				// send notification that the device is on
+				sio.logger.Warn("Device is on")
+				sio.notifier.Notify("Device Status", "The device is on")
+				}
+				
+				
+			}
 		}
 	}
 
@@ -307,10 +335,10 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 
 			// turns out the first line could come out dirty sometimes (i.e. "4558|925|41|643|220")
 			// so let's check the first number for correctness just in case
-			if sliderIdx == 0 && number > 1023 {
+			/*if sliderIdx == 0 && number > 1023 {
 				sio.logger.Debugw("Got malformed line from serial, ignoring", "line", line)
 				return
-			}
+			}*/
 
 			// map the value from raw to a "dirty" float between 0 and 1 (e.g. 0.15451...)
 			dirtyFloat := float32(number) / 1023.0
