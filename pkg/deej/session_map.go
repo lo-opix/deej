@@ -3,13 +3,13 @@ package deej
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"strconv"
 
-	"github.com/omriharel/deej/pkg/deej/util"
 	"github.com/micmonay/keybd_event"
+	"github.com/omriharel/deej/pkg/deej/util"
 	"github.com/thoas/go-funk"
 	"go.uber.org/zap"
 )
@@ -41,6 +41,8 @@ const (
 
 	// targets all currently unmapped sessions (experimental)
 	specialTargetAllUnmapped = "unmapped"
+
+	specialTargetAllWithoudDiscordUnmapped = "unmapped_without_discord"
 
 	// this threshold constant assumes that re-acquiring all sessions is a kind of expensive operation,
 	// and needs to be limited in some manner. this value was previously user-configurable through a config
@@ -287,16 +289,15 @@ func (m *sessionMap) handleSliderMoveEvent(event SliderMoveEvent) {
 	}
 }
 
-
 func (m *sessionMap) handleButtonEvent(event ButtonEvent) {
 	if event.Value == 0 {
 		kb, err := keybd_event.NewKeyBonding()
-		
+
 		i, err := strconv.Atoi(m.deej.config.ButtonMapping[strconv.Itoa(event.ButtonID)][0])
 		kb.SetKeys(i)
-		m.logger.Debugw("Triggering button","keycodeint",i)
+		m.logger.Debugw("Triggering button", "keycodeint", i)
 		// m.logger.Debug(0xAD + 0xFFF)
-		err = kb.Launching() 
+		err = kb.Launching()
 		if err != nil {
 			panic(err)
 		}
@@ -321,7 +322,6 @@ func (m *sessionMap) resolveTarget(target string) []string {
 }
 
 func (m *sessionMap) applyTargetTransform(specialTargetName string) []string {
-
 	// select the transformation based on its name
 	switch specialTargetName {
 
@@ -348,8 +348,24 @@ func (m *sessionMap) applyTargetTransform(specialTargetName string) []string {
 		for sessionIdx, session := range m.unmappedSessions {
 			targetKeys[sessionIdx] = session.Key()
 		}
-
 		return targetKeys
+
+	// get currently unmapped sessions without discord even if it is not mapped
+	case specialTargetAllWithoudDiscordUnmapped:
+		targetKeys := make([]string, len(m.unmappedSessions))
+		discordIsIn := false
+		for sessionIdx, session := range m.unmappedSessions {
+			if session.Key() != "discord.exe" {
+				targetKeys[sessionIdx] = session.Key()
+			} else {
+				discordIsIn = true
+			}
+		}
+		if discordIsIn {
+			return targetKeys[:len(m.unmappedSessions)-1]
+		} else {
+			return targetKeys
+		}
 	}
 
 	return nil
