@@ -9,7 +9,7 @@
 # important: slider indexes start at 0, regardless of which analog pins you're using!
 slider_mapping:
   0: master
-  1: brave.exe
+  1: discord.exe
   2: deej.unmapped_without_discord
 
 # supported button list https://github.com/micmonay/keybd_event/blob/master/keybd_windows.go (scroll down)
@@ -31,7 +31,7 @@ button_mapping:
 invert_sliders: false
 
 # settings for connecting to the arduino board
-com_port: COM5
+com_port: COM3
 baud_rate: 9600
 
 # adjust the amount of signal noise reduction depending on your hardware quality

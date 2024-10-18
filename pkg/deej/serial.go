@@ -282,6 +282,11 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 				// send notification that the device is off
 				sio.logger.Warn("Device is off")
 				sio.notifier.Notify("Device Status", "The device is off")
+				u := sio.deej.sessions.unmappedSessions
+				for _, session := range u {
+					session.SetVolume(1.0)
+				}
+				sio.logger.Debug(u)
 				// change sound output to default
 				
 			} else if splitValue == "on" {
