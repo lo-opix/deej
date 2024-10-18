@@ -32,9 +32,9 @@ type SerialIO struct {
 	lastKnownNumSliders        int
 	currentSliderPercentValues []float32
 	lastKnownNumButtons        int
-	currentButtonValues 			 []int
+	currentButtonValues        []int
 
-	sliderMoveConsumers []chan SliderMoveEvent
+	sliderMoveConsumers  []chan SliderMoveEvent
 	buttonEventConsumers []chan ButtonEvent
 
 	notifier *ToastNotifier
@@ -48,8 +48,8 @@ type SliderMoveEvent struct {
 
 // SliderMoveEvent represents a single slider move captured by deej
 type ButtonEvent struct {
-	ButtonID     int
-	Value 			 int
+	ButtonID int
+	Value    int
 }
 
 var expectedLinePattern = regexp.MustCompile(`^\w{1}\d{1,4}(\|\w{1}\d{1,4})*\r\n$`)
@@ -67,14 +67,14 @@ func NewSerialIO(deej *Deej, logger *zap.SugaredLogger) (*SerialIO, error) {
 	}
 
 	sio := &SerialIO{
-		deej:                deej,
-		logger:              logger,
-		stopChannel:         make(chan bool),
-		connected:           false,
-		conn:                nil,
-		sliderMoveConsumers: []chan SliderMoveEvent{},
+		deej:                 deej,
+		logger:               logger,
+		stopChannel:          make(chan bool),
+		connected:            false,
+		conn:                 nil,
+		sliderMoveConsumers:  []chan SliderMoveEvent{},
 		buttonEventConsumers: []chan ButtonEvent{},
-		notifier:            notifier, 
+		notifier:             notifier,
 	}
 
 	logger.Debug("Created serial i/o instance")
@@ -282,22 +282,21 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 				// send notification that the device is off
 				sio.logger.Warn("Device is off")
 				sio.notifier.Notify("Device Status", "The device is off")
-				u := sio.deej.sessions.unmappedSessions
-				for _, session := range u {
+
+				// set all unmapped sessions to 1.0 volume
+				for _, session := range sio.deej.sessions.unmappedSessions {
 					session.SetVolume(1.0)
 				}
-				sio.logger.Debug(u)
 				// change sound output to default
-				
+
 			} else if splitValue == "on" {
 				if !isDeviceOn {
-				isDeviceOn = true
-				// send notification that the device is on
-				sio.logger.Warn("Device is on")
-				sio.notifier.Notify("Device Status", "The device is on")
+					isDeviceOn = true
+					// send notification that the device is on
+					sio.logger.Warn("Device is on")
+					sio.notifier.Notify("Device Status", "The device is on")
 				}
-				
-				
+
 			}
 		}
 	}
@@ -334,70 +333,66 @@ func (sio *SerialIO) handleLine(logger *zap.SugaredLogger, line string) {
 
 		// logger.Debug(stringValue);
 
+		// convert string values to integers ("1023" -> 1023)
+		number, _ := strconv.Atoi(stringValue)
 
-			// convert string values to integers ("1023" -> 1023)
-			number, _ := strconv.Atoi(stringValue)
+		// turns out the first line could come out dirty sometimes (i.e. "4558|925|41|643|220")
+		// so let's check the first number for correctness just in case
+		/*if sliderIdx == 0 && number > 1023 {
+			sio.logger.Debugw("Got malformed line from serial, ignoring", "line", line)
+			return
+		}*/
 
-			// turns out the first line could come out dirty sometimes (i.e. "4558|925|41|643|220")
-			// so let's check the first number for correctness just in case
-			/*if sliderIdx == 0 && number > 1023 {
-				sio.logger.Debugw("Got malformed line from serial, ignoring", "line", line)
-				return
-			}*/
+		// map the value from raw to a "dirty" float between 0 and 1 (e.g. 0.15451...)
+		dirtyFloat := float32(number) / 1023.0
 
-			// map the value from raw to a "dirty" float between 0 and 1 (e.g. 0.15451...)
-			dirtyFloat := float32(number) / 1023.0
+		// normalize it to an actual volume scalar between 0.0 and 1.0 with 2 points of precision
+		normalizedScalar := util.NormalizeScalar(dirtyFloat)
 
-			// normalize it to an actual volume scalar between 0.0 and 1.0 with 2 points of precision
-			normalizedScalar := util.NormalizeScalar(dirtyFloat)
+		// if sliders are inverted, take the complement of 1.0
+		if sio.deej.config.InvertSliders {
+			normalizedScalar = 1 - normalizedScalar
+		}
 
-			// if sliders are inverted, take the complement of 1.0
-			if sio.deej.config.InvertSliders {
-				normalizedScalar = 1 - normalizedScalar
+		// check if it changes the desired state (could just be a jumpy raw slider value)
+		if util.SignificantlyDifferent(sio.currentSliderPercentValues[sliderIdx], normalizedScalar, sio.deej.config.NoiseReductionLevel) {
+
+			// if it does, update the saved value and create a move event
+			sio.currentSliderPercentValues[sliderIdx] = normalizedScalar
+
+			moveEvents = append(moveEvents, SliderMoveEvent{
+				SliderID:     sliderIdx,
+				PercentValue: normalizedScalar,
+			})
+
+			if sio.deej.Verbose() {
+				logger.Debugw("Slider moved", "event", moveEvents[len(moveEvents)-1])
 			}
-
-			// check if it changes the desired state (could just be a jumpy raw slider value)
-			if util.SignificantlyDifferent(sio.currentSliderPercentValues[sliderIdx], normalizedScalar, sio.deej.config.NoiseReductionLevel) {
-
-				// if it does, update the saved value and create a move event
-				sio.currentSliderPercentValues[sliderIdx] = normalizedScalar
-
-				moveEvents = append(moveEvents, SliderMoveEvent{
-					SliderID:     sliderIdx,
-					PercentValue: normalizedScalar,
-				})
-
-				if sio.deej.Verbose() {
-					logger.Debugw("Slider moved", "event", moveEvents[len(moveEvents)-1])
-				}
-			}
-
+		}
 
 	}
 
 	buttonEvents := []ButtonEvent{}
 	for buttonId, stringValue := range splitLineButtons {
 
-		
-			//button handler
-			stringValue = strings.Replace(stringValue, "b", "", -1)
-			number, _ := strconv.Atoi(stringValue)
-			
-			if sio.currentButtonValues[buttonId] != number {
+		//button handler
+		stringValue = strings.Replace(stringValue, "b", "", -1)
+		number, _ := strconv.Atoi(stringValue)
 
-				sio.currentButtonValues[buttonId] = number
+		if sio.currentButtonValues[buttonId] != number {
 
-				buttonEvents = append(buttonEvents, ButtonEvent{
-					ButtonID:     buttonId,
-					Value: 				number,
-				})
+			sio.currentButtonValues[buttonId] = number
 
-				if sio.deej.Verbose() {
-					logger.Debugw("Button changed", "event", buttonEvents[len(buttonEvents)-1])
-				}
+			buttonEvents = append(buttonEvents, ButtonEvent{
+				ButtonID: buttonId,
+				Value:    number,
+			})
 
+			if sio.deej.Verbose() {
+				logger.Debugw("Button changed", "event", buttonEvents[len(buttonEvents)-1])
 			}
 
+		}
 
 	}
 
