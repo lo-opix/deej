@@ -87,7 +87,6 @@ func NewSerialIO(deej *Deej, logger *zap.SugaredLogger) (*SerialIO, error) {
 
 // Start attempts to connect to our arduino chip
 func (sio *SerialIO) Start() error {
-
 	// don't allow multiple concurrent connections
 	if sio.connected {
 		sio.logger.Warn("Already connected, can't start another without closing first")
@@ -118,28 +117,39 @@ func (sio *SerialIO) Start() error {
 	var err error
 	sio.conn, err = serial.Open(sio.connOptions)
 	if err != nil {
-
-		// might need a user notification here, TBD
 		sio.logger.Warnw("Failed to open serial connection", "error", err)
 		return fmt.Errorf("open serial connection: %w", err)
 	}
 
 	namedLogger := sio.logger.Named(strings.ToLower(sio.connOptions.PortName))
-
 	namedLogger.Infow("Connected", "conn", sio.conn)
 	sio.connected = true
+
+	sio.conn.Write([]byte("1")) // Init led state
 
 	// read lines or await a stop
 	go func() {
 		connReader := bufio.NewReader(sio.conn)
 		lineChannel := sio.readLine(namedLogger, connReader)
 
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-sio.stopChannel:
 				sio.close(namedLogger)
+				return
 			case line := <-lineChannel:
 				sio.handleLine(namedLogger, line)
+			case <-ticker.C: // Send one way ping message every 10 seconds
+				message := "1"
+				_, err := sio.conn.Write([]byte(message))
+				if err != nil {
+					namedLogger.Warnw("Failed to send serial message", "error", err)
+				} else {
+					namedLogger.Debugw("Sent ping message", "message", message)
+				}
 			}
 		}
 	}()
